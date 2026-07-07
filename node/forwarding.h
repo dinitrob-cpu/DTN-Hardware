@@ -21,6 +21,8 @@ typedef struct {
     tracer_t            tracer;
     lora_transport_t  *radio;
     dtn_time_t         boot_time;     /* wall-clock seconds at boot */
+    dtn_time_t         time_offset;    /* offset added to local clock to sync to ground station epoch */
+    int                time_synced;   /* 1 once a time-sync message has been received */
     /* Stats for the status command / dashboard. */
     uint64_t           bundles_tx;
     uint64_t           bundles_rx;
@@ -33,9 +35,35 @@ void node_state_init(node_state_t *ns, node_id_t self, float buf_cap,
                      trace_sink_fn sink, void *sink_user);
 
 /* Build a new bundle (called by the CLI / dashboard on the ground station,
- * or by an injected message on any node). Returns the bundle_id assigned. */
+ * or by an injected message on any node). `t` is the current DTN time
+ * (from the platform's wall clock + time_offset). Returns the bundle_id,
+ * or 0 on failure. */
 uint64_t node_generate_bundle(node_state_t *ns, node_id_t dst,
-                              bundle_class_t cls, const char *msg);
+                              bundle_class_t cls, const char *msg,
+                              dtn_time_t t);
+
+/* --- Time sync ---
+ * The ground station (Pi) periodically broadcasts its current DTN time
+ * over LoRa. ESP32 nodes receive it and set their time_offset so their
+ * local clock aligns to the ground station's epoch. This lets all nodes
+ * agree on when scheduled contacts open/close without needing NTP or an RTC.
+ *
+ * Wire format: 2-byte magic 0x5453 ("TS") + 4-byte float (ground station's
+ * DTN time at the moment of transmission). 6 bytes total — fits in a single
+ * LoRa frame trivially. */
+#define TIME_SYNC_MAGIC 0x5453u
+
+/* Called by the ground station to broadcast a time-sync message.
+ * Returns 0 on success, -1 on TX failure. */
+int node_send_time_sync(node_state_t *ns, dtn_time_t t);
+
+/* Called by any node when a LoRa frame arrives. If the frame is a
+ * time-sync message, sets ns->time_offset so that the platform's local
+ * clock + time_offset == ground station epoch. Returns 1 if the frame
+ * was a time-sync (handled), 0 if it wasn't a time-sync frame (caller
+ * should try bundle_deserialize), -1 on error. */
+int node_try_handle_time_sync(node_state_t *ns, dtn_time_t local_t,
+                               const uint8_t *frame, size_t len);
 
 /* Main per-tick step. Called by the platform event loop at each iteration.
  * Checks contact windows, custody timeouts, dequeues + routes + transmits.

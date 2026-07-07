@@ -109,7 +109,7 @@ static void cli_handle(node_state_t *ns, char *line, dtn_time_t t)
         char *msg = strtok(NULL, "\r\n");
         if (!dst || !cls || !msg) { printf("usage: send <dst> <class> <msg>\n"); return; }
         node_id_t did = node_id_from_str(dst);
-        node_generate_bundle(ns, did, parse_class(cls), msg);
+        node_generate_bundle(ns, did, parse_class(cls), msg, t);
         printf("bundle queued for %s\n", dst);
     } else if (strcmp(cmd, "status") == 0) {
         cli_status(ns);
@@ -129,24 +129,27 @@ int main(int argc, char **argv)
     const char *node_str = NULL;
     const char *plan_path = "../config/contact_plan.json";
     int enable_cli = 0;
+    int is_ground = 0;   /* ground station: broadcast time-sync */
     float buf_cap = 4096.0f;
 
     static struct option long_opts[] = {
-        { "node", required_argument, 0, 'n' },
-        { "plan", required_argument, 0, 'p' },
-        { "cli",  no_argument,       0, 'c' },
-        { "buf",  required_argument, 0, 'b' },
+        { "node",   required_argument, 0, 'n' },
+        { "plan",   required_argument, 0, 'p' },
+        { "cli",    no_argument,       0, 'c' },
+        { "ground", no_argument,       0, 'g' },
+        { "buf",    required_argument, 0, 'b' },
         { 0, 0, 0, 0 }
     };
     int opt;
-    while ((opt = getopt_long(argc, argv, "n:p:cb:", long_opts, 0)) != -1) {
+    while ((opt = getopt_long(argc, argv, "n:p:cgb:", long_opts, 0)) != -1) {
         switch (opt) {
         case 'n': node_str   = optarg; break;
         case 'p': plan_path  = optarg; break;
         case 'c': enable_cli = 1;      break;
+        case 'g': is_ground  = 1;      break;
         case 'b': buf_cap    = (float)atof(optarg); break;
         default:
-            fprintf(stderr, "usage: %s --node <ID> --plan <path> [--cli] [--buf bytes]\n", argv[0]);
+            fprintf(stderr, "usage: %s --node <ID> --plan <path> [--cli] [--ground] [--buf bytes]\n", argv[0]);
             return 1;
         }
     }
@@ -187,6 +190,10 @@ int main(int argc, char **argv)
                     stdout_trace_sink, NULL);
     ns.plan      = plan;
     ns.boot_time = wall_clock_seconds();
+    if (is_ground) {
+        ns.time_synced = 1;   /* ground station is the clock source */
+        printf("running as ground station — will broadcast time-sync\n");
+    }
 
     /* Timerfd: fire every 100 ms for the DTN tick. */
     int tfd = timerfd_create(CLOCK_MONOTONIC, 0);
@@ -217,16 +224,22 @@ int main(int argc, char **argv)
 
     char line_buf[256];
     size_t line_len = 0;
+    float next_time_sync = 0.0f;   /* next DTN time to send a time-sync broadcast */
 
     while (g_running) {
         int r = poll(pfds, nfds, lora_irq_fd >= 0 ? 1000 : 100);
         if (r < 0) { if (errno == EINTR) continue; perror("poll"); break; }
 
-        dtn_time_t t = wall_clock_seconds() - ns.boot_time;
+        dtn_time_t t = wall_clock_seconds() - ns.boot_time + ns.time_offset;
 
         if (pfds[0].revents & POLLIN) {
             uint64_t exp; ssize_t rd = read(tfd, &exp, sizeof(exp)); (void)rd;
             node_tick(&ns, t);
+            /* Ground station: broadcast time-sync every 5 seconds. */
+            if (is_ground && t >= next_time_sync) {
+                node_send_time_sync(&ns, t);
+                next_time_sync = t + 5.0f;
+            }
             /* Fallback: if no IRQ fd, do a non-blocking recv poll here. */
             if (lora_irq_fd < 0) {
                 node_try_recv(&ns, t);

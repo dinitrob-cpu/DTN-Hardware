@@ -58,8 +58,12 @@ static void esp_trace_sink(const trace_record_t *rec, void *user)
 static dtn_time_t wall_clock_seconds(void)
 {
     /* ESP32-S3 has no RTC battery; use tick count as a monotonic clock.
-     * On MVP all nodes boot together so this is a fine shared epoch. */
-    return (dtn_time_t)(xTaskGetTickCount() / (double)configTICK_RATE_HZ);
+     * The ground station broadcasts time-sync messages over LoRa at boot;
+     * node_try_handle_time_sync sets ns->time_offset so all nodes share
+     * the same epoch. Until the first sync arrives, local boot time is
+     * the epoch (good enough for MVP where nodes start together). */
+    return (dtn_time_t)(xTaskGetTickCount() / (double)configTICK_RATE_HZ)
+           + g_ns.time_offset;
 }
 
 /* --- Tasks --- */
@@ -72,7 +76,12 @@ static void radio_rx_task(void *arg)
         int n = lora_recv(ns->radio, buf, sizeof(buf), 5000);
         if (n > 0) {
             dtn_time_t t = wall_clock_seconds();
-            node_handle_received_frame(ns, t, buf, (size_t)n);
+            /* Check if it's a time-sync frame first. */
+            int ts = node_try_handle_time_sync(ns, t, buf, (size_t)n);
+            if (ts == 0) {
+                /* Not a time-sync frame — handle as a bundle. */
+                node_handle_received_frame(ns, t, buf, (size_t)n);
+            }
         }
     }
     vTaskDelete(NULL);

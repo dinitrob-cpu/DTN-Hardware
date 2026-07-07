@@ -1,4 +1,4 @@
-/* node/forwarding.c — the DTN forwarding engine, shared by both node apps.
+/* dtn_core/forwarding.c — the DTN forwarding engine, shared by both node apps.
  *
  * This ties together the contact plan, queue, CGR router, custody manager,
  * and LoRa transport. The platform-specific main (main_pi.c / main_esp32.c)
@@ -15,14 +15,6 @@
 #include <string.h>
 #include <stdio.h>
 
-static dtn_time_t now_seconds(dtn_time_t boot_time)
-{
-    /* Platform code should pass a real clock; this is a fallback that
-     * returns 0. The Pi and ESP32 mains inject real time. */
-    (void)boot_time;
-    return 0.0f;
-}
-
 void node_state_init(node_state_t *ns, node_id_t self, float buf_cap,
                      const char *policy, lora_transport_t *radio,
                      trace_sink_fn sink, void *sink_user)
@@ -37,7 +29,8 @@ void node_state_init(node_state_t *ns, node_id_t self, float buf_cap,
 }
 
 uint64_t node_generate_bundle(node_state_t *ns, node_id_t dst,
-                              bundle_class_t cls, const char *msg)
+                              bundle_class_t cls, const char *msg,
+                              dtn_time_t t)
 {
     bundle_t b;
     memset(&b, 0, sizeof(b));
@@ -50,7 +43,7 @@ uint64_t node_generate_bundle(node_state_t *ns, node_id_t dst,
     b.cust         = ns->self_id;
     b.prio         = (uint8_t)cls;
     b.bundle_class = cls;
-    b.t_gen        = now_seconds(ns->boot_time);
+    b.t_gen        = t;   /* caller provides the real clock */
     b.ttl          = 3600.0f;   /* 1 hour */
     size_t mlen = strlen(msg);
     if (mlen > BUNDLE_MAX_PAYLOAD) mlen = BUNDLE_MAX_PAYLOAD;
@@ -194,8 +187,62 @@ int node_try_recv(node_state_t *ns, dtn_time_t t)
     uint8_t rbuf[256];
     int r = lora_recv(ns->radio, rbuf, sizeof(rbuf), 0);
     if (r > 0) {
-        node_handle_received_frame(ns, t, rbuf, (size_t)r);
+        /* Check if it's a time-sync frame first. */
+        int ts = node_try_handle_time_sync(ns, t, rbuf, (size_t)r);
+        if (ts == 1) return 0;   /* handled as time-sync */
+        if (ts == 0) {
+            /* Not a time-sync frame — try as a bundle. */
+            node_handle_received_frame(ns, t, rbuf, (size_t)r);
+        }
         return 0;
     }
     return r < 0 ? -1 : 1;
+}
+
+/* --- Time sync --- */
+
+/* Big-endian helpers (kept local — the bundle wire format has its own in
+ * bundle.c, but time-sync is a separate tiny frame so we do it here). */
+static void ts_put_u16(uint8_t *p, uint16_t v) { p[0]=(uint8_t)(v>>8); p[1]=(uint8_t)v; }
+static void ts_put_f32(uint8_t *p, float f) {
+    uint32_t v; memcpy(&v, &f, 4);
+    p[0]=(uint8_t)(v>>24); p[1]=(uint8_t)(v>>16); p[2]=(uint8_t)(v>>8); p[3]=(uint8_t)v;
+}
+static uint16_t ts_get_u16(const uint8_t *p) { return ((uint16_t)p[0]<<8) | p[1]; }
+static float ts_get_f32(const uint8_t *p) {
+    uint32_t v = ((uint32_t)p[0]<<24)|((uint32_t)p[1]<<16)|((uint32_t)p[2]<<8)|p[3];
+    float f; memcpy(&f, &v, 4); return f;
+}
+
+int node_send_time_sync(node_state_t *ns, dtn_time_t t)
+{
+    uint8_t frame[6];
+    ts_put_u16(frame, TIME_SYNC_MAGIC);
+    ts_put_f32(frame + 2, t);
+    int sent = lora_send(ns->radio, frame, sizeof(frame));
+    if (sent > 0) {
+        tracer_emit(&ns->tracer, t, ns->self_id,
+                     TRACE_BUNDLE_GENERATED, 0, "time_sync t=%.1f", (double)t);
+        return 0;
+    }
+    return -1;
+}
+
+int node_try_handle_time_sync(node_state_t *ns, dtn_time_t local_t,
+                               const uint8_t *frame, size_t len)
+{
+    if (len < 6) return 0;   /* too short for time-sync */
+    if (ts_get_u16(frame) != TIME_SYNC_MAGIC) return 0;  /* not a time-sync frame */
+
+    /* Ground station's DTN time at the moment it sent this frame.
+     * Our local DTN time is local_t. The offset is: gs_time - local_t.
+     * From now on, the platform adds ns->time_offset to its local clock. */
+    float gs_time = ts_get_f32(frame + 2);
+    ns->time_offset = gs_time - local_t;
+    ns->time_synced = 1;
+
+    tracer_emit(&ns->tracer, local_t, ns->self_id,
+                 TRACE_BUNDLE_ARRIVED, 0, "time_sync gs=%.1f offset=%.1f",
+                 (double)gs_time, (double)ns->time_offset);
+    return 1;
 }
