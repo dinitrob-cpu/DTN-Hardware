@@ -55,10 +55,12 @@ int queue_enqueue(node_queue_t *q, const bundle_t *b)
         return 0;
     }
 
-    /* Buffer pressure: free < 10% of cap. Try preemption. */
+    /* Buffer pressure: free <= 10% of cap. Try preemption.
+     * At exactly 10% free we are under pressure (not enough for a typical
+     * bundle); use > so the boundary case triggers preemption. */
     float free_bytes = queue_free(q);
-    if (free_bytes >= PREEMPTION_THRESHOLD_FRACTION * q->buf_cap)
-        return -1;   /* not under pressure, just full */
+    if (free_bytes > PREEMPTION_THRESHOLD_FRACTION * q->buf_cap)
+        return -1;   /* plenty of room — shouldn't have reached here */
 
     int victim = find_lowest_class_victim(q, b);
     if (victim < 0) return -1;
