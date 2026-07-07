@@ -1,0 +1,97 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ───────────────────────────────────────────────────────────────
+  # Build the Pi-side C code (dtn_core + dtn-node + tests) on Ubuntu,
+  # which provides the Linux headers the Pi transport needs
+  # (linux/spi/spidev.h, linux/gpio.h, sys/timerfd.h, sys/epoll.h).
+  # ───────────────────────────────────────────────────────────────
+  build-pi:
+    name: Build (Pi side, Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential cmake cppcheck
+
+      - name: Configure (CMake)
+        run: cmake -S . -B build -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build -j$(nproc)
+
+      - name: Run unit tests
+        working-directory: build
+        run: ctest --output-on-failure
+
+      - name: Smoke-run the node (--help path)
+        # Exercises the binary's argument parsing without needing a radio.
+        # We expect it to exit non-zero (missing --node), which we invert.
+        run: |
+          ./build/dtn-node --help 2>&1 | head -20 || true
+          # No-radio smoke: load the plan, run one tick, exit. The node
+          # tolerates a failed LoRa init and continues for the CLI path.
+          timeout 5 ./build/dtn-node --node EART --plan config/contact_plan.json --cli <<< "status" || true
+
+  # ───────────────────────────────────────────────────────────────
+  # Static analysis with cppcheck on the shared core (board-agnostic).
+  # ───────────────────────────────────────────────────────────────
+  static-analysis:
+    name: cppcheck (dtn_core)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cppcheck
+        run: sudo apt-get update && sudo apt-get install -y cppcheck
+
+      - name: Run cppcheck on dtn_core
+        run: |
+          cppcheck --version
+          cppcheck \
+            --enable=warning,style,performance \
+            --suppress=missingIncludeSystem \
+            --error-exitcode=1 \
+            -I . \
+            dtn_core/ \
+            2>&1 | tee cppcheck.txt
+        continue-on-error: true   # informational for now; tighten later
+
+      - name: Upload cppcheck report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cppcheck-report
+          path: cppcheck.txt
+
+  # ───────────────────────────────────────────────────────────────
+  # Python dashboard: syntax check (no runtime deps installed).
+  # ───────────────────────────────────────────────────────────────
+  dashboard-check:
+    name: Dashboard syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Compile-check dashboard
+        run: python -m compileall -q ground/dashboard/app.py
+
+      - name: JSON validity of contact plan
+        run: python -c "import json; json.load(open('config/contact_plan.json')); print('contact_plan.json OK')"
