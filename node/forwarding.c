@@ -59,9 +59,10 @@ uint64_t node_generate_bundle(node_state_t *ns, node_id_t dst,
     b.size         = (uint16_t)(41 + mlen + 4);  /* wire size */
 
     if (queue_enqueue(&ns->queue, &b) < 0) return 0;
+    char dst_str[5]; node_id_to_str(dst, dst_str);
     tracer_emit(&ns->tracer, b.t_gen, ns->self_id,
                 TRACE_BUNDLE_GENERATED, b.bundle_id,
-                "dst=%s msg_len=%u", "???", (unsigned)mlen);
+                "dst=%s msg_len=%u", dst_str, (unsigned)mlen);
     return b.bundle_id;
 }
 

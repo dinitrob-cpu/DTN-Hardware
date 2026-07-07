@@ -60,15 +60,7 @@
 #define PIN_NUM_SCLK 12
 #define PIN_NUM_CS   10
 
-typedef struct {
-    spi_device_handle_t spi;
-    spi_host_device_t   host;
-    int                 cs_pin;
-    int                 reset_pin;
-    int                 dio0_pin;
-    SemaphoreHandle_t   dio0_sem;
-    volatile uint8_t    last_irq;
-} esp_lora_state_t;
+/* esp_lora_state struct is defined in lora_transport.h (under #ifdef ESP_PLATFORM). */
 
 static const char *TAG = "lora_esp32";
 

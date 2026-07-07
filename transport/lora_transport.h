@@ -52,4 +52,40 @@ void lora_close(lora_transport_t *t);
 /* Build a default 868 MHz config for the given platform pins. */
 void lora_config_default_868(lora_config_t *cfg, int cs, int reset, int dio0, int dio1);
 
+/* --- Platform-specific constructors ---
+ * Each implementation exposes an init function that wires its vtable +
+ * impl state into a lora_transport_t. The node app allocates the state
+ * struct (defined here so the caller has the size) and passes it in. */
+
+#ifdef __linux__
+/* lora_pi.c */
+struct pi_lora_state {
+    int     spi_fd;
+    int     gpiochip_fd;
+    int     dio0_line;
+    int     dio0_fd;
+    uint8_t op_mode;
+};
+typedef struct pi_lora_state pi_lora_state_t;
+void lora_transport_init_pi(lora_transport_t *t, pi_lora_state_t *st);
+#endif
+
+#ifdef ESP_PLATFORM
+/* lora_esp32.c — ESP-IDF types are available under this guard. */
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+#include "driver/spi_master.h"
+struct esp_lora_state {
+    spi_device_handle_t spi;
+    spi_host_device_t   host;
+    int                 cs_pin;
+    int                 reset_pin;
+    int                 dio0_pin;
+    SemaphoreHandle_t   dio0_sem;
+    volatile uint8_t    last_irq;
+};
+typedef struct esp_lora_state esp_lora_state_t;
+void lora_transport_init_esp32(lora_transport_t *t, esp_lora_state_t *st);
+#endif
+
 #endif /* TRANSPORT_LORA_TRANSPORT_H */

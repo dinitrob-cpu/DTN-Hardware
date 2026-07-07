@@ -64,13 +64,7 @@
 
 #define SPI_SPEED_HZ 500000
 
-typedef struct {
-    int  spi_fd;
-    int  gpiochip_fd;
-    int  dio0_line;            /* GPIO line handle for DIO0 */
-    int  dio0_fd;              /* event fd for line edge events */
-    uint8_t op_mode;
-} pi_lora_state_t;
+/* pi_lora_state struct is defined in lora_transport.h (under #ifdef __linux__). */
 
 static int spi_write_read(int fd, uint8_t *buf, size_t len)
 {
