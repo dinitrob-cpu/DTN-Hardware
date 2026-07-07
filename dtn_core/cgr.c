@@ -9,13 +9,6 @@
 #include <math.h>
 #include <string.h>
 
-#ifndef CGR_MAX_ROUTES_PI
-#define CGR_MAX_ROUTES_PI 64
-#endif
-#ifndef CGR_MAX_ROUTES_ESP
-#define CGR_MAX_ROUTES_ESP 16
-#endif
-
 #define MAX_PARETO_PER_NODE 8
 
 void cgr_config_default(cgr_config_t *cfg, int max_routes)

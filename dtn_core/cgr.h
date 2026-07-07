@@ -6,6 +6,16 @@
 #include "types.h"
 #include <stddef.h>
 
+/* K-best beam width defaults. Used by cgr_config_default and by node
+ * code that picks a conservative route cap. Defined here so callers
+ * don't need to include cgr.c. */
+#ifndef CGR_MAX_ROUTES_PI
+#define CGR_MAX_ROUTES_PI 64
+#endif
+#ifndef CGR_MAX_ROUTES_ESP
+#define CGR_MAX_ROUTES_ESP 16
+#endif
+
 /* CGR configuration. Defaults mirror Project_DSN's CGREngine defaults. */
 typedef struct {
     int   max_hops;     /* default 10 (BUNDLE_MAX_HOPS) */

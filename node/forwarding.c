@@ -43,7 +43,7 @@ uint64_t node_generate_bundle(node_state_t *ns, node_id_t dst,
     memset(&b, 0, sizeof(b));
     /* Bundle id: combine self_id + a counter. For MVP use a static counter. */
     static uint64_t counter = 1;
-    b.bundle_id    = (ns->self_id << 32) | (counter++);
+    b.bundle_id    = ((uint64_t)ns->self_id << 32) | (counter++);
     b.src          = ns->self_id;
     b.dst          = dst;
     b.curr         = ns->self_id;

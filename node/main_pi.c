@@ -212,7 +212,7 @@ int main(int argc, char **argv)
         dtn_time_t t = wall_clock_seconds() - ns.boot_time;
 
         if (pfds[0].revents & POLLIN) {
-            uint64_t exp; read(tfd, &exp, sizeof(exp));
+            uint64_t exp; ssize_t rd = read(tfd, &exp, sizeof(exp)); (void)rd;
             node_tick(&ns, t);
         }
 
