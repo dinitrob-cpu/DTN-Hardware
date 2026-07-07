@@ -145,6 +145,7 @@ static const char *read_number(const char *p, float *out)
 
 int contact_plan_load_json(contact_plan_t *cp, const char *json_path)
 {
+    cp->count = 0;   /* zero early so callers don't iterate garbage on failure */
     FILE *f = fopen(json_path, "rb");
     if (!f) return -1;
     char buf[8192];

@@ -75,7 +75,8 @@ static void test_bundle_serdes(void)
 static void test_contact_plan(void)
 {
     contact_plan_t cp;
-    int n = contact_plan_load_json(&cp, "config/contact_plan.json");
+    /* ctest runs from the build/ directory; the plan is one level up. */
+    int n = contact_plan_load_json(&cp, "../config/contact_plan.json");
     CHECK(n > 0, "contact plan loaded");
     const contact_t *c = contact_plan_get(&cp, node_id_from_str("EART"), node_id_from_str("ERLY"));
     CHECK(c != NULL, "found EART->ERLY contact");
