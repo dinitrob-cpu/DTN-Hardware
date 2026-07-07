@@ -243,7 +243,11 @@ static void esp_close(lora_transport_t *t)
 }
 
 static const struct lora_transport_vtable ESP_VTABLE = {
-    esp_init, esp_send, esp_recv, esp_rssi, esp_close
+    esp_init, esp_send, esp_recv, esp_rssi, esp_close,
+    /* get_irq_fd: ESP32 uses a FreeRTOS semaphore, not a fd. Return -1
+     * so callers know there's no poll()-able fd. The ESP32 node app
+     * drives RX via the semaphore in a dedicated task. */
+    NULL
 };
 
 void lora_transport_init_esp32(lora_transport_t *t, esp_lora_state_t *st)

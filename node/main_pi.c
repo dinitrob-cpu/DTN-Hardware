@@ -177,6 +177,10 @@ int main(int argc, char **argv)
         /* Continue anyway so the CLI/trace path can be exercised. */
     }
 
+    /* Get the LoRa IRQ fd for edge-driven receive. -1 means no edge events
+     * available; we'll fall back to a periodic recv poll inside the loop. */
+    int lora_irq_fd = lora_get_irq_fd(&radio);
+
     /* Node state. */
     node_state_t ns;
     node_state_init(&ns, node_id_from_str(node_str), buf_cap, "accept", &radio,
@@ -189,24 +193,33 @@ int main(int argc, char **argv)
     struct itimerspec its = { { 0, 100*1000*1000 }, { 0, 100*1000*1000 } };
     timerfd_settime(tfd, 0, &its, NULL);
 
-    /* If CLI enabled, make stdin non-blocking so poll() works. */
+    struct pollfd pfds[3];
+    nfds_t nfds = 1;   /* always have tfd */
+    pfds[0].fd     = tfd;
+    pfds[0].events = POLLIN;
+    pfds[1].fd     = -1;
+    pfds[1].events = POLLIN;
+    pfds[2].fd     = -1;
+    pfds[2].events = POLLIN;
+
     if (enable_cli) {
-        int flags = fcntl(STDIN_FILENO, F_GETFL, 0);
-        fcntl(STDIN_FILENO, F_SETFL, flags | O_NONBLOCK);
+        int sflags = fcntl(STDIN_FILENO, F_GETFL, 0);
+        fcntl(STDIN_FILENO, F_SETFL, sflags | O_NONBLOCK);
+        pfds[1].fd = STDIN_FILENO;
+        nfds = 2;
         cli_help();
     }
-
-    struct pollfd pfds[2];
-    pfds[0].fd = tfd;
-    pfds[0].events = POLLIN;
-    pfds[1].fd = enable_cli ? STDIN_FILENO : -1;
-    pfds[1].events = POLLIN;
+    if (lora_irq_fd >= 0) {
+        pfds[2].fd     = lora_irq_fd;
+        pfds[2].events = POLLIN;
+        nfds = 3;
+    }
 
     char line_buf[256];
     size_t line_len = 0;
 
     while (g_running) {
-        int r = poll(pfds, 2, 1000);
+        int r = poll(pfds, nfds, lora_irq_fd >= 0 ? 1000 : 100);
         if (r < 0) { if (errno == EINTR) continue; perror("poll"); break; }
 
         dtn_time_t t = wall_clock_seconds() - ns.boot_time;
@@ -214,6 +227,10 @@ int main(int argc, char **argv)
         if (pfds[0].revents & POLLIN) {
             uint64_t exp; ssize_t rd = read(tfd, &exp, sizeof(exp)); (void)rd;
             node_tick(&ns, t);
+            /* Fallback: if no IRQ fd, do a non-blocking recv poll here. */
+            if (lora_irq_fd < 0) {
+                node_try_recv(&ns, t);
+            }
         }
 
         if (enable_cli && (pfds[1].revents & POLLIN)) {
@@ -231,6 +248,11 @@ int main(int argc, char **argv)
                     }
                 }
             }
+        }
+
+        if (lora_irq_fd >= 0 && (pfds[2].revents & POLLIN)) {
+            /* DIO0 rising edge — a frame arrived (or TX completed). */
+            node_try_recv(&ns, t);
         }
     }
 

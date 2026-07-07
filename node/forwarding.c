@@ -178,11 +178,24 @@ int node_tick(node_state_t *ns, dtn_time_t t)
     /* 2. Try to send one bundle (the queue pop selects the highest-rank one). */
     try_send_one(ns, t);
 
-    /* 3. Try to receive (with a short timeout). The platform main may
-     * instead drive receive via an IRQ; this is the fallback polling path. */
-    uint8_t rbuf[256];
-    int r = lora_recv(ns->radio, rbuf, sizeof(rbuf), 100);
-    if (r > 0) node_handle_received_frame(ns, t, rbuf, (size_t)r);
+    /* 3. Receive is now driven by the platform event loop via the LoRa IRQ
+     * fd (see node_try_recv). This avoids a blocking lora_recv() inside
+     * the tick. The platform main calls node_try_recv() when DIO0 fires. */
 
     return 0;
+}
+
+/* Called by the platform event loop when the LoRa IRQ fd becomes readable
+ * (DIO0 rising edge = RX_DONE or TX_DONE). Reads the frame and hands it to
+ * the forwarding engine. Returns 0 on success, -1 on error, 1 if no frame
+ * was available (spurious wake). */
+int node_try_recv(node_state_t *ns, dtn_time_t t)
+{
+    uint8_t rbuf[256];
+    int r = lora_recv(ns->radio, rbuf, sizeof(rbuf), 0);
+    if (r > 0) {
+        node_handle_received_frame(ns, t, rbuf, (size_t)r);
+        return 0;
+    }
+    return r < 0 ? -1 : 1;
 }

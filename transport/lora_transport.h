@@ -35,6 +35,7 @@ struct lora_transport_vtable {
     int  (*recv)(lora_transport_t *t, uint8_t *buf, size_t cap, uint32_t timeout_ms);
     int  (*rssi)(lora_transport_t *t);   /* dBm, negative */
     void (*close)(lora_transport_t *t);
+    int  (*get_irq_fd)(lora_transport_t *t);  /* returns poll()-able fd, or -1 */
 };
 
 struct lora_transport {
@@ -48,6 +49,12 @@ int  lora_send (lora_transport_t *t, const uint8_t *buf, size_t len);
 int  lora_recv (lora_transport_t *t, uint8_t *buf, size_t cap, uint32_t timeout_ms);
 int  lora_rssi (lora_transport_t *t);
 void lora_close(lora_transport_t *t);
+
+/* Returns a file descriptor that becomes readable when the radio raises
+ * an interrupt (DIO0 edge: TX_DONE or RX_DONE). Returns -1 if the transport
+ * doesn't support edge events (caller should fall back to polling).
+ * The caller can poll()/epoll() on this fd. */
+int  lora_get_irq_fd(lora_transport_t *t);
 
 /* Build a default 868 MHz config for the given platform pins. */
 void lora_config_default_868(lora_config_t *cfg, int cs, int reset, int dio0, int dio1);
@@ -63,7 +70,7 @@ struct pi_lora_state {
     int     spi_fd;
     int     gpiochip_fd;
     int     dio0_line;
-    int     dio0_fd;
+    int     dio0_fd;          /* GPIO V2 line event fd (poll()-able) */
     uint8_t op_mode;
 };
 typedef struct pi_lora_state pi_lora_state_t;

@@ -20,8 +20,8 @@
 #include <string.h>
 #include <stdio.h>
 #include <errno.h>
+#include <poll.h>
 #include <sys/ioctl.h>
-#include <sys/epoll.h>
 #include <linux/spi/spidev.h>
 #include <linux/gpio.h>
 
@@ -154,15 +154,32 @@ static int pi_init(lora_transport_t *t, const lora_config_t *cfg)
     reg_write(st->spi_fd, REG_FIFO_TX_BASE, 0x00);
     reg_write(st->spi_fd, REG_FIFO_RX_BASE, 0x00);
 
-    /* Open GPIO for DIO0 IRQ via /dev/gpiochip0. We'll poll it in recv. */
+    /* Open GPIO for DIO0 IRQ via /dev/gpiochip0.
+     * Use the GPIO V2 line-event interface so we get a poll()-able fd that
+     * becomes readable on DIO0 rising edge (TX_DONE or RX_DONE). */
     st->gpiochip_fd = open("/dev/gpiochip0", O_RDWR);
     if (st->gpiochip_fd < 0) {
-        /* Non-fatal: recv will fall back to polling the IRQ_FLAGS register. */
+        /* Non-fatal: send/recv will fall back to polling the IRQ_FLAGS
+         * register (slower, higher CPU, but functional). */
         st->gpiochip_fd = -1;
+        st->dio0_fd     = -1;
     } else {
-        /* Request DIO0 line for edge detection. (Simplified; real impl uses
-         * GPIO_V2_GET_LINEEVENT_IOCTL.) For MVP we poll the IRQ register. */
-        (void)cfg->dio0_pin;
+        struct gpio_v2_line_event_request req;
+        memset(&req, 0, sizeof(req));
+        req.offset = (uint32_t)cfg->dio0_pin;
+        snprintf(req.consumer, sizeof(req.consumer), "dtn-lora-dio0");
+        req.config.flags = GPIO_V2_LINE_EDGE_RISING;
+        /* Default to input (the SX1276 drives DIO0). */
+        req.config.num_attrs = 0;
+        if (ioctl(st->gpiochip_fd, GPIO_V2_GET_LINEEVENT_IOCTL, &req) < 0) {
+            /* Fallback: no edge events. Recv will poll the IRQ register. */
+            st->dio0_fd = -1;
+        } else {
+            st->dio0_fd = req.fd;
+            /* Make the event fd non-blocking so poll() works cleanly. */
+            int flags = fcntl(st->dio0_fd, F_GETFL, 0);
+            fcntl(st->dio0_fd, F_SETFL, flags | O_NONBLOCK);
+        }
     }
 
     /* Go to STDBY. */
@@ -183,12 +200,33 @@ static int pi_send(lora_transport_t *t, const uint8_t *buf, size_t len)
     reg_write(st->spi_fd, REG_IRQ_MASK, 0x00);
     set_mode(st->spi_fd, MODE_TX, st);
 
-    /* Poll IRQ for TX_DONE. */
+    /* Wait for TX_DONE via GPIO edge event on DIO0, with fallback to
+     * register polling if edge events aren't available. */
     uint8_t irq = 0;
-    for (int i = 0; i < 1000 && !(irq & IRQ_TX_DONE_MASK); ++i) {
-        irq = reg_read(st->spi_fd, REG_IRQ_FLAGS);
-        usleep(1000);
+    int got_irq = 0;
+
+    if (st->dio0_fd >= 0) {
+        struct pollfd pfd = { .fd = st->dio0_fd, .events = POLLIN };
+        int pr = poll(&pfd, 1, 2000);   /* 2s timeout */
+        if (pr > 0 && (pfd.revents & POLLIN)) {
+            /* Drain the event. */
+            struct gpio_v2_line_event ev;
+            ssize_t rd = read(st->dio0_fd, &ev, sizeof(ev));
+            (void)rd;
+            got_irq = 1;
+        }
+    } else {
+        /* Fallback: poll the IRQ register. */
+        for (int i = 0; i < 2000 && !(irq & IRQ_TX_DONE_MASK); ++i) {
+            irq = reg_read(st->spi_fd, REG_IRQ_FLAGS);
+            usleep(1000);
+        }
+        got_irq = (irq & IRQ_TX_DONE_MASK) != 0;
     }
+
+    if (got_irq && st->dio0_fd >= 0)
+        irq = reg_read(st->spi_fd, REG_IRQ_FLAGS);
+
     reg_write(st->spi_fd, REG_IRQ_FLAGS, 0xFF);   /* clear */
     set_mode(st->spi_fd, MODE_STDBY, st);
     return (irq & IRQ_TX_DONE_MASK) ? (int)len : -1;
@@ -201,22 +239,46 @@ static int pi_recv(lora_transport_t *t, uint8_t *buf, size_t cap, uint32_t timeo
     reg_write(st->spi_fd, REG_IRQ_MASK, 0x00);
     set_mode(st->spi_fd, MODE_RX_SINGLE, st);
 
+    /* Wait for RX_DONE via GPIO edge event on DIO0, with fallback. */
     uint8_t irq = 0;
-    uint32_t waited = 0;
-    while (!(irq & IRQ_RX_DONE_MASK) && waited < timeout_ms) {
-        irq = reg_read(st->spi_fd, REG_IRQ_FLAGS);
-        usleep(1000);
-        ++waited;
+    int got_irq = 0;
+
+    if (st->dio0_fd >= 0) {
+        struct pollfd pfd = { .fd = st->dio0_fd, .events = POLLIN };
+        int pr = poll(&pfd, 1, (int)timeout_ms);
+        if (pr > 0 && (pfd.revents & POLLIN)) {
+            struct gpio_v2_line_event ev;
+            ssize_t rd = read(st->dio0_fd, &ev, sizeof(ev));
+            (void)rd;
+            got_irq = 1;
+        }
+        /* pr == 0 -> timeout; pr < 0 -> error (treat as timeout). */
+    } else {
+        uint32_t waited = 0;
+        while (!(irq & IRQ_RX_DONE_MASK) && waited < timeout_ms) {
+            irq = reg_read(st->spi_fd, REG_IRQ_FLAGS);
+            usleep(1000);
+            ++waited;
+        }
+        got_irq = (irq & IRQ_RX_DONE_MASK) != 0;
     }
 
-    if (!(irq & IRQ_RX_DONE_MASK)) {
+    if (!got_irq) {
         set_mode(st->spi_fd, MODE_STDBY, st);
         return 0;   /* timeout */
     }
+
+    if (st->dio0_fd >= 0)
+        irq = reg_read(st->spi_fd, REG_IRQ_FLAGS);
+
     if (irq & IRQ_PAYLOAD_CRC_ERR) {
         reg_write(st->spi_fd, REG_IRQ_FLAGS, 0xFF);
         set_mode(st->spi_fd, MODE_STDBY, st);
         return -1;
+    }
+    if (!(irq & IRQ_RX_DONE_MASK)) {
+        set_mode(st->spi_fd, MODE_STDBY, st);
+        return 0;
     }
     reg_write(st->spi_fd, REG_IRQ_FLAGS, 0xFF);
 
@@ -238,15 +300,22 @@ static int pi_rssi(lora_transport_t *t)
     return r - 157;   /* RSSI = value - 157 for HF port (>860 MHz) */
 }
 
+static int pi_get_irq_fd(lora_transport_t *t)
+{
+    pi_lora_state_t *st = (pi_lora_state_t *)t->impl;
+    return st->dio0_fd;
+}
+
 static void pi_close(lora_transport_t *t)
 {
     pi_lora_state_t *st = (pi_lora_state_t *)t->impl;
-    if (st->spi_fd >= 0)    close(st->spi_fd);
+    if (st->dio0_fd >= 0)     close(st->dio0_fd);
+    if (st->spi_fd >= 0)     close(st->spi_fd);
     if (st->gpiochip_fd >= 0) close(st->gpiochip_fd);
 }
 
 static const struct lora_transport_vtable PI_VTABLE = {
-    pi_init, pi_send, pi_recv, pi_rssi, pi_close
+    pi_init, pi_send, pi_recv, pi_rssi, pi_close, pi_get_irq_fd
 };
 
 /* Exported constructor used by the Pi node app. */

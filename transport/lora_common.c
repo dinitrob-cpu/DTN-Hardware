@@ -30,6 +30,11 @@ void lora_close(lora_transport_t *t)
     if (t->vtable->close) t->vtable->close(t);
 }
 
+int lora_get_irq_fd(lora_transport_t *t)
+{
+    return t->vtable->get_irq_fd ? t->vtable->get_irq_fd(t) : -1;
+}
+
 void lora_config_default_868(lora_config_t *cfg, int cs, int reset, int dio0, int dio1)
 {
     cfg->freq_mhz      = 868.0f;

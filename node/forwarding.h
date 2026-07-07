@@ -39,8 +39,15 @@ uint64_t node_generate_bundle(node_state_t *ns, node_id_t dst,
 
 /* Main per-tick step. Called by the platform event loop at each iteration.
  * Checks contact windows, custody timeouts, dequeues + routes + transmits.
+ * Does NOT call lora_recv() — receive is driven by the platform via
+ * node_try_recv() when the LoRa IRQ fd fires.
  * Returns 0 on success, -1 on a non-fatal error. */
 int node_tick(node_state_t *ns, dtn_time_t t);
+
+/* Called by the platform event loop when the LoRa IRQ fd becomes readable
+ * (DIO0 rising edge = RX_DONE). Reads the frame and hands it to the
+ * forwarding engine. Returns 0 on success, 1 if no frame (spurious), -1 on error. */
+int node_try_recv(node_state_t *ns, dtn_time_t t);
 
 /* Called when a LoRa frame arrives. Deserializes the bundle, accepts
  * custody if appropriate, enqueues for further forwarding, and emits
