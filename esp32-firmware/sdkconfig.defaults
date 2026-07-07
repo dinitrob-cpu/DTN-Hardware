@@ -1,0 +1,23 @@
+# ESP32-S3 sdkconfig defaults for the DTN node firmware.
+# Used by: idf.py set-target esp32s3 (then idf.py builds with these defaults).
+
+# Target.
+CONFIG_IDF_TARGET="esp32s3"
+
+# PSRAM (ESP32-S3-WROOM-1 N16R8 has 8 MB PSRAM).
+CONFIG_SPIRAM=y
+CONFIG_SPIRAM_USE_MALLOC=y
+
+# Flash partition: 4 MB, with a 64 KB LittleFS for the contact plan.
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Enable the USB-CDC console for the optional CLI.
+CONFIG_ESP_CONSOLE_USB_CDC=n   # set y if you want CLI over USB
+CONFIG_ESP_CONSOLE_UART=y
+
+# FreeRTOS tick rate (default 100 Hz; we use 100 ms ticks in the app).
+CONFIG_FREERTOS_HZ=100
+
+# Log level.
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y

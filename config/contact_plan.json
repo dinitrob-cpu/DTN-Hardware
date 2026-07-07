@@ -1,0 +1,24 @@
+{
+  "contacts": [
+    { "frm": "EART", "to": "ERLY", "t_start": 0,   "t_end": 60,  "rate": 1200, "owlt": 0, "conf": 1.0, "ber": 0.0 },
+    { "frm": "ERLY", "to": "EART", "t_start": 0,   "t_end": 60,  "rate": 1200, "owlt": 0, "conf": 1.0, "ber": 0.0 },
+
+    { "frm": "ERLY", "to": "MRLY", "t_start": 300, "t_end": 360, "rate": 600,  "owlt": 4, "conf": 0.9, "ber": 1e-5 },
+    { "frm": "MRLY", "to": "ERLY", "t_start": 300, "t_end": 360, "rate": 600,  "owlt": 4, "conf": 0.9, "ber": 1e-5 },
+
+    { "frm": "MRLY", "to": "MLND", "t_start": 600, "t_end": 660, "rate": 600,  "owlt": 1, "conf": 0.95, "ber": 1e-6 },
+    { "frm": "MLND", "to": "MRLY", "t_start": 600, "t_end": 660, "rate": 600,  "owlt": 1, "conf": 0.95, "ber": 1e-6 },
+
+    { "frm": "MLND", "to": "ROVR", "t_start": 900, "t_end": 960, "rate": 600,  "owlt": 0, "conf": 0.95, "ber": 1e-6 },
+    { "frm": "ROVR", "to": "MLND", "t_start": 900, "t_end": 960, "rate": 600,  "owlt": 0, "conf": 0.95, "ber": 1e-6 },
+
+    { "frm": "EART", "to": "ERLY", "t_start": 1200, "t_end": 1260, "rate": 1200, "owlt": 0, "conf": 1.0, "ber": 0.0 },
+    { "frm": "ERLY", "to": "EART", "t_start": 1200, "t_end": 1260, "rate": 1200, "owlt": 0, "conf": 1.0, "ber": 0.0 },
+    { "frm": "ERLY", "to": "MRLY", "t_start": 1500, "t_end": 1560, "rate": 600,  "owlt": 4, "conf": 0.9, "ber": 1e-5 },
+    { "frm": "MRLY", "to": "ERLY", "t_start": 1500, "t_end": 1560, "rate": 600,  "owlt": 4, "conf": 0.9, "ber": 1e-5 },
+    { "frm": "MRLY", "to": "MLND", "t_start": 1800, "t_end": 1860, "rate": 600, "owlt": 1, "conf": 0.95, "ber": 1e-6 },
+    { "frm": "MLND", "to": "MRLY", "t_start": 1800, "t_end": 1860, "rate": 600, "owlt": 1, "conf": 0.95, "ber": 1e-6 },
+    { "frm": "MLND", "to": "ROVR", "t_start": 2100, "t_end": 2160, "rate": 600, "owlt": 0, "conf": 0.95, "ber": 1e-6 },
+    { "frm": "ROVR", "to": "MLND", "t_start": 2100, "t_end": 2160, "rate": 600, "owlt": 0, "conf": 0.95, "ber": 1e-6 }
+  ]
+}

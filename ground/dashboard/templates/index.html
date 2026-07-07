@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>DTN-Hardware Dashboard</title>
+  <style>
+    body { font-family: ui-monospace, monospace; margin: 1.5em; background: #0d1117; color: #c9d1d9; }
+    h1 { font-size: 1.2em; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1em; }
+    .panel { border: 1px solid #30363d; padding: 1em; border-radius: 6px; background: #161b22; }
+    .panel h2 { margin-top: 0; font-size: 1em; color: #58a6ff; }
+    table { border-collapse: collapse; width: 100%; font-size: 0.85em; }
+    td, th { padding: 2px 6px; border-bottom: 1px solid #21262d; text-align: left; }
+    #trace { height: 320px; overflow-y: auto; font-size: 0.8em; white-space: pre; }
+    .ts { color: #8b949e; }
+    .ev { color: #58a6ff; }
+    .bid { color: #f0b429; }
+    input, button { padding: 4px 8px; background: #21262d; color: #c9d1d9; border: 1px solid #30363d; border-radius: 4px; }
+    button { cursor: pointer; }
+    .hint { color: #8b949e; font-size: 0.8em; }
+  </style>
+</head>
+<body>
+  <h1>DTN-Hardware — Ground Station Dashboard</h1>
+  <div class="grid">
+    <div class="panel">
+      <h2>Nodes</h2>
+      <table>
+        <thead><tr><th>Node</th><th>Last seen</th><th>Last event</th></tr></thead>
+        <tbody id="nodes"><tr><td colspan="3" class="hint">waiting for data…</td></tr></tbody>
+      </table>
+    </div>
+    <div class="panel">
+      <h2>Send a bundle</h2>
+      <form id="send-form">
+        <input name="dst" placeholder="dst (e.g. ROVR)" size="6">
+        <select name="class">
+          <option value="cmd">cmd</option>
+          <option value="sci">sci</option>
+          <option value="tlm" selected>tlm</option>
+          <option value="hk">hk</option>
+        </select>
+        <input name="msg" placeholder="message" size="32">
+        <button type="submit">Send</button>
+      </form>
+      <div id="send-result" class="hint"></div>
+    </div>
+    <div class="panel" style="grid-column: 1 / 3;">
+      <h2>Trace</h2>
+      <div id="trace">connecting…</div>
+    </div>
+  </div>
+
+  <script>
+    async function refreshState() {
+      try {
+        const r = await fetch('/state');
+        const s = await r.json();
+        const tbody = document.getElementById('nodes');
+        const ids = Object.keys(s.nodes);
+        if (ids.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="3" class="hint">no nodes seen yet</td></tr>';
+        } else {
+          tbody.innerHTML = ids.map(id => `<tr><td>${id}</td><td>${s.nodes[id].last_seen.toFixed(1)}s</td><td>${s.nodes[id].last_event||''}</td></tr>`).join('');
+        }
+      } catch (e) {}
+    }
+    setInterval(refreshState, 1000);
+
+    const es = new EventSource('/trace/stream');
+    const traceEl = document.getElementById('trace');
+    es.onmessage = (e) => {
+      traceEl.innerHTML += e.data + '\n';
+      traceEl.scrollTop = traceEl.scrollHeight;
+    };
+
+    document.getElementById('send-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const fd = new FormData(e.target);
+      const r = await fetch('/send', { method: 'POST', body: fd });
+      const j = await r.json();
+      document.getElementById('send-result').textContent =
+        'paste into dtn-node --cli: ' + (j.cli_command || '');
+    });
+  </script>
+</body>
+</html>

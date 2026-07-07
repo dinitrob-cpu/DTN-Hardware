@@ -1,0 +1,27 @@
+# Build artifacts
+build/
+cmake-build-*/
+*.o
+*.a
+*.elf
+*.bin
+*.map
+
+# ESP-IDF
+esp32-firmware/build/
+esp32-firmware/sdkconfig
+esp32-firmware/sdkconfig.old
+esp32-firmware/managed_components/
+
+# Python / dashboard
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Editor / OS
+.idea/
+.vscode/
+*.swp
+.DS_Store
+Thumbs.db
