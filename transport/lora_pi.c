@@ -155,8 +155,11 @@ static int pi_init(lora_transport_t *t, const lora_config_t *cfg)
     reg_write(st->spi_fd, REG_FIFO_RX_BASE, 0x00);
 
     /* Open GPIO for DIO0 IRQ via /dev/gpiochip0.
-     * Use the GPIO V2 line-event interface so we get a poll()-able fd that
-     * becomes readable on DIO0 rising edge (TX_DONE or RX_DONE). */
+     * Use the GPIO line-event interface so we get a poll()-able fd that
+     * becomes readable on DIO0 rising edge (TX_DONE or RX_DONE).
+     * We try the V1 (struct gpioevent_request) interface first — it's
+     * available on kernels >= 5.10 (including CI runners). The V2 API
+     * (gpio_v2_line_event_request) is newer and not universally available. */
     st->gpiochip_fd = open("/dev/gpiochip0", O_RDWR);
     if (st->gpiochip_fd < 0) {
         /* Non-fatal: send/recv will fall back to polling the IRQ_FLAGS
@@ -164,21 +167,20 @@ static int pi_init(lora_transport_t *t, const lora_config_t *cfg)
         st->gpiochip_fd = -1;
         st->dio0_fd     = -1;
     } else {
-        struct gpio_v2_line_event_request req;
+        struct gpioevent_request req;
         memset(&req, 0, sizeof(req));
-        req.offset = (uint32_t)cfg->dio0_pin;
-        snprintf(req.consumer, sizeof(req.consumer), "dtn-lora-dio0");
-        req.config.flags = GPIO_V2_LINE_EDGE_RISING;
-        /* Default to input (the SX1276 drives DIO0). */
-        req.config.num_attrs = 0;
-        if (ioctl(st->gpiochip_fd, GPIO_V2_GET_LINEEVENT_IOCTL, &req) < 0) {
-            /* Fallback: no edge events. Recv will poll the IRQ register. */
+        req.lineoffset  = (uint32_t)cfg->dio0_pin;
+        req.handleflags = GPIOHANDLE_REQUEST_INPUT;
+        req.eventflags  = GPIOEVENT_REQUEST_RISING_EDGE;
+        snprintf(req.consumer_label, sizeof(req.consumer_label), "dtn-lora-dio0");
+        if (ioctl(st->gpiochip_fd, GPIO_GET_LINEEVENT_IOCTL, &req) < 0) {
+            /* Fallback: no edge events. Send/recv will poll the IRQ register. */
             st->dio0_fd = -1;
         } else {
             st->dio0_fd = req.fd;
             /* Make the event fd non-blocking so poll() works cleanly. */
-            int flags = fcntl(st->dio0_fd, F_GETFL, 0);
-            fcntl(st->dio0_fd, F_SETFL, flags | O_NONBLOCK);
+            int eflags = fcntl(st->dio0_fd, F_GETFL, 0);
+            fcntl(st->dio0_fd, F_SETFL, eflags | O_NONBLOCK);
         }
     }
 
@@ -210,7 +212,7 @@ static int pi_send(lora_transport_t *t, const uint8_t *buf, size_t len)
         int pr = poll(&pfd, 1, 2000);   /* 2s timeout */
         if (pr > 0 && (pfd.revents & POLLIN)) {
             /* Drain the event. */
-            struct gpio_v2_line_event ev;
+            struct gpioevent_data ev;
             ssize_t rd = read(st->dio0_fd, &ev, sizeof(ev));
             (void)rd;
             got_irq = 1;
@@ -247,7 +249,7 @@ static int pi_recv(lora_transport_t *t, uint8_t *buf, size_t cap, uint32_t timeo
         struct pollfd pfd = { .fd = st->dio0_fd, .events = POLLIN };
         int pr = poll(&pfd, 1, (int)timeout_ms);
         if (pr > 0 && (pfd.revents & POLLIN)) {
-            struct gpio_v2_line_event ev;
+            struct gpioevent_data ev;
             ssize_t rd = read(st->dio0_fd, &ev, sizeof(ev));
             (void)rd;
             got_irq = 1;
